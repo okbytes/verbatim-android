@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -51,17 +54,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.verbatim.Citation
 import app.verbatim.Entry
@@ -136,8 +142,8 @@ fun EntryFormScreen(
 ) {
     val colors = LocalVerbatimColors.current
     val titleFocus = remember { FocusRequester() }
-    var confirmsDiscard by remember { mutableStateOf(false) }
-    var confirmsDelete by remember { mutableStateOf(false) }
+    var confirmsDiscard by rememberSaveable { mutableStateOf(false) }
+    var confirmsDelete by rememberSaveable { mutableStateOf(false) }
     var pendingPaste by remember { mutableStateOf<Pair<String?, String>?>(null) }
 
     val hasChanges = draft != initialDraft && !draft.isBlank
@@ -223,6 +229,7 @@ fun EntryFormScreen(
             modifier =
                 Modifier.fillMaxSize()
                     .padding(innerPadding)
+                    .consumeWindowInsets(innerPadding)
                     .imePadding()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -316,7 +323,11 @@ fun EntryFormScreen(
                                         count = CadenceMode.entries.size,
                                     ),
                             ) {
-                                Text(mode.label, maxLines = 1)
+                                Text(
+                                    text = mode.label,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
                     }
@@ -329,7 +340,7 @@ fun EntryFormScreen(
                         Column {
                             Spacer(Modifier.height(12.dp))
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().selectableGroup(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 for (day in 1..7) {
@@ -338,15 +349,19 @@ fun EntryFormScreen(
                                     Box(
                                         modifier =
                                             Modifier.weight(1f)
-                                                .defaultMinSize(minHeight = 40.dp)
+                                                .defaultMinSize(minHeight = 48.dp)
                                                 .clip(RoundedCornerShape(10.dp))
                                                 .background(
                                                     if (selected) MaterialTheme.colorScheme.primary
                                                     else MaterialTheme.colorScheme.surfaceVariant
                                                 )
-                                                .clickable {
-                                                    onDraftChange(draft.copy(weekday = day))
-                                                }
+                                                .selectable(
+                                                    selected = selected,
+                                                    role = Role.RadioButton,
+                                                    onClick = {
+                                                        onDraftChange(draft.copy(weekday = day))
+                                                    },
+                                                )
                                                 .semantics { contentDescription = fullName },
                                         contentAlignment = Alignment.Center,
                                     ) {
@@ -358,6 +373,7 @@ fun EntryFormScreen(
                                             color =
                                                 if (selected) MaterialTheme.colorScheme.onPrimary
                                                 else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
                                         )
                                     }
                                 }
@@ -384,7 +400,7 @@ fun EntryFormScreen(
                     modifier =
                         Modifier.fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable { confirmsDelete = true },
+                            .clickable(role = Role.Button) { confirmsDelete = true },
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),

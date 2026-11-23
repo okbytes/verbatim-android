@@ -30,10 +30,11 @@ class LibraryContractTest {
     }
 
     @Test
-    fun earlyAndroidStoreStillOpensButIsNotAnImportFormat() {
-        val earlyStore = lib.encode().replace("verbatim-android-library", "verbatim-backup")
-        assertEquals(lib, Library.decodePrivateStore(earlyStore))
-        assertThrows(IllegalArgumentException::class.java) { Library.decode(earlyStore) }
+    fun acceptsIphoneBackupFormatAndRejectsUnknownFormats() {
+        val iosBackup = lib.encode().replace("verbatim-android-library", "verbatim-backup")
+        assertEquals(lib, Library.decode(iosBackup))
+        val unknown = lib.encode().replace("verbatim-android-library", "something-else")
+        assertThrows(IllegalArgumentException::class.java) { Library.decode(unknown) }
     }
 
     @Test
@@ -98,7 +99,7 @@ class LibraryContractTest {
     }
 
     @Test
-    fun recallUnclearSegmentCarriesPrimaryHeardWord() {
+    fun recallUnclearSegmentCarriesPrimaryHeardWordAndBuildsLog() {
         val result = Recall.grade("A red bird.", listOf("a read bird", "a red bird"))
         assertTrue(result.verbatim)
         assertEquals(1, result.unclearCount)
@@ -110,18 +111,35 @@ class LibraryContractTest {
             ),
             result.segments(showExtraWords = true),
         )
+        val log = result.transcriptionLog("Bird", "Verbatim 0.1.1")
+        assertTrue(log.contains("Result: Verbatim, 1 unclear"))
+        assertTrue(log.contains("red → read (unclear)"))
+        assertTrue(log.contains("a read bird"))
     }
 
     @Test
-    fun duplicateTitleAvoidsExistingCollisions() {
+    fun voiceCombinesMultiplePauseSegmentsAndPreservesAlternates() {
+        val combined =
+            Voice.combineSegments(
+                listOf(
+                    listOf("for god so loved", "for god so lived"),
+                    listOf("the world"),
+                )
+            )
+        assertEquals(listOf("for god so loved the world", "for god so lived the world"), combined)
+        assertTrue(Recall.grade("For God so loved the world.", combined).verbatim)
+    }
+
+    @Test
+    fun duplicateTitleAvoidsExistingCollisionsAndNormalizesUnicode() {
         val existing =
             Library(
                 listOf(
-                    Entry("Psalm 23", "The Lord", false, null),
-                    Entry("Psalm 23 (Copy)", "The Lord", false, null),
+                    Entry("Cafe\u0301", "The Lord", false, null),
+                    Entry("Café (Copy)", "The Lord", false, null),
                 )
             )
-        assertEquals("Psalm 23 (Copy 2)", existing.duplicateTitle("Psalm 23"))
+        assertEquals("Café (Copy 2)", existing.duplicateTitle("Café"))
         assertEquals("Speech (Copy)", lib.duplicateTitle("Speech"))
     }
 
@@ -144,5 +162,15 @@ class LibraryContractTest {
         assertEquals("Fresh", addedEntry.title)
         assertFalse(addedEntry.progress)
         assertNull(addedEntry.review)
+    }
+
+    @Test
+    fun entryKeepsStableIdAcrossEditsWhileComparingByContent() {
+        val a = Entry("Title", "Body", false, null)
+        val b = a.copy(progress = true)
+        assertEquals(a.id, b.id)
+        val decoded = Library.decode(Library(listOf(a)).encode()).entries.single()
+        assertEquals(a, decoded)
+        assertNotEquals(a.id, decoded.id)
     }
 }

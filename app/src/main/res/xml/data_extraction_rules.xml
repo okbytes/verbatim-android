@@ -1,4 +1,10 @@
 <data-extraction-rules>
-    <cloud-backup><exclude domain="root" path="."/><exclude domain="file" path="."/><exclude domain="sharedpref" path="."/></cloud-backup>
-    <device-transfer><exclude domain="root" path="."/><exclude domain="file" path="."/><exclude domain="sharedpref" path="."/></device-transfer>
+    <cloud-backup>
+        <exclude domain="root" path="."/>
+        <exclude domain="file" path="."/>
+        <exclude domain="sharedpref" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="library-v1.json"/>
+    </device-transfer>
 </data-extraction-rules>

@@ -46,7 +46,7 @@ private val LightVerbatimColors =
         groupedCard = Color(0xFFFFFFFF),
         badgeContainer = Color(0xFFD8EBE7),
         badgeContent = Color(0xFF125B57),
-        dueTint = Color(0xFFD93025),
+        dueTint = Color(0xFFB71C1C),
     )
 
 private val DarkVerbatimColors =

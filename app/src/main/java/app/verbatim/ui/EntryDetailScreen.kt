@@ -46,6 +46,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,7 +86,7 @@ fun EntryDetailScreen(
     val fabExpanded by remember { derivedStateOf { scrollState.value < titleThresholdPx } }
 
     var menuExpanded by remember { mutableStateOf(false) }
-    var confirmsDelete by remember { mutableStateOf(false) }
+    var confirmsDelete by rememberSaveable { mutableStateOf(false) }
 
     val displayText = remember(entry.text) { Entry.normalizeLineEndings(entry.text).trimEnd() }
 
@@ -178,7 +179,7 @@ fun EntryDetailScreen(
                 icon = {
                     Icon(
                         imageVector = Icons.Rounded.Mic,
-                        contentDescription = "Recite",
+                        contentDescription = null,
                     )
                 },
                 text = { Text("Recite") },

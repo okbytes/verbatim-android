@@ -37,6 +37,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimeInput
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -45,13 +46,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.verbatim.AddEntriesResult
 import app.verbatim.Library
@@ -82,7 +87,8 @@ fun SettingsScreen(
 ) {
     val colors = LocalVerbatimColors.current
     val context = LocalContext.current
-    var showTimePicker by remember { mutableStateOf(false) }
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
+    var showTimePicker by rememberSaveable { mutableStateOf(false) }
 
     val formattedTime =
         remember(hour, minute) { ReviewFormat.formatReminderTime(context, hour, minute) }
@@ -117,7 +123,6 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            // Reminders section
             Column {
                 SettingsSectionHeader("Reminders")
                 Surface(
@@ -129,7 +134,7 @@ fun SettingsScreen(
                         Row(
                             modifier =
                                 Modifier.fillMaxWidth()
-                                    .clickable { showTimePicker = true }
+                                    .clickable(role = Role.Button) { showTimePicker = true }
                                     .padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -170,7 +175,10 @@ fun SettingsScreen(
                             Row(
                                 modifier =
                                     Modifier.fillMaxWidth()
-                                        .clickable(onClick = onRequestNotificationPermission)
+                                        .clickable(
+                                            role = Role.Button,
+                                            onClick = onRequestNotificationPermission,
+                                        )
                                         .padding(horizontal = 16.dp, vertical = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -204,7 +212,10 @@ fun SettingsScreen(
                         Row(
                             modifier =
                                 Modifier.fillMaxWidth()
-                                    .clickable(onClick = onOpenNotificationSettings)
+                                    .clickable(
+                                        role = Role.Button,
+                                        onClick = onOpenNotificationSettings,
+                                    )
                                     .padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -235,7 +246,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Library section
             Column {
                 SettingsSectionHeader("Library")
                 Surface(
@@ -256,21 +266,28 @@ fun SettingsScreen(
                                 onClick = { onBookOrderChange(false) },
                                 shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
                             ) {
-                                Text("Alphabetical", maxLines = 1)
+                                Text(
+                                    text = "Alphabetical",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                             SegmentedButton(
                                 selected = bookOrder,
                                 onClick = { onBookOrderChange(true) },
                                 shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
                             ) {
-                                Text("Bible book order", maxLines = 1)
+                                Text(
+                                    text = "Bible book order",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
                     }
                 }
             }
 
-            // Library files section (3 side-by-side action tiles matching iOS ergonomics)
             Column {
                 SettingsSectionHeader("Library files")
                 Row(
@@ -298,7 +315,7 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "“Add” imports new entries unscheduled, skipping titles you already have.",
+                    text = "“Add” imports new entries unscheduled, skipping titles you already have. Accepts Android and iPhone Verbatim backups.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 8.dp),
@@ -320,7 +337,13 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showTimePicker = false },
             title = { Text("Reminder time") },
-            text = { TimePicker(state = pickerState) },
+            text = {
+                if (screenHeightDp < 500) {
+                    TimeInput(state = pickerState)
+                } else {
+                    TimePicker(state = pickerState)
+                }
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -409,7 +432,8 @@ private fun FileActionTile(
 ) {
     val colors = LocalVerbatimColors.current
     Surface(
-        modifier = modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
+        modifier =
+            modifier.clip(RoundedCornerShape(16.dp)).clickable(role = Role.Button, onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         color = colors.groupedCard,
     ) {
@@ -429,6 +453,7 @@ private fun FileActionTile(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

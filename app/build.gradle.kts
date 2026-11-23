@@ -9,6 +9,7 @@ plugins {
 
 val signingPropsFile =
     listOf(
+            File(System.getProperty("user.home"), ".config/verbatim/signing/keystore.properties"),
             rootProject.file(".tools/signing/keystore.properties"),
             rootProject.file("keystore.properties"),
         )
@@ -40,9 +41,9 @@ android {
     defaultConfig {
         applicationId = "app.verbatim.android"
         minSdk = 31
-        targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        targetSdk = 35
+        versionCode = 2
+        versionName = "0.1.1"
     }
     signingConfigs {
         if (hasReleaseSigning) {

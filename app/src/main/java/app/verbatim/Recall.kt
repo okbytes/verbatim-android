@@ -32,6 +32,7 @@ object Recall {
         val marks: List<Mark>,
         val sourceText: String = "",
         val transcript: String = "",
+        val readings: List<String> = emptyList(),
     ) {
         val verbatim
             get() = marks.isNotEmpty() && marks.all { it.kind == "said" || it.kind == "unclear" }
@@ -54,6 +55,49 @@ object Recall {
                     else -> it.value
                 }
             }
+
+        /** Compact plain-text diagnostic log (modeled on iOS) for troubleshooting speech grading. */
+        fun transcriptionLog(title: String, header: String): String {
+            val summary =
+                if (verbatim) {
+                    listOfNotNull("Verbatim", unclearCount.takeIf { it > 0 }?.let { "$it unclear" })
+                        .joinToString(", ")
+                } else {
+                    listOfNotNull(
+                            missedCount.takeIf { it > 0 }?.let { "$it missed" },
+                            unclearCount.takeIf { it > 0 }?.let { "$it unclear" },
+                            extraCount.takeIf { it > 0 }?.let { "$it extra" },
+                        )
+                        .joinToString(", ")
+                        .ifEmpty { "nothing heard" }
+                }
+            val diffs =
+                marks.mapNotNull {
+                    when (it.kind) {
+                        "missed" -> "${it.value} (missed)"
+                        "extra" -> "${it.value} (extra)"
+                        "unclear" -> "${it.value} → ${it.heard.orEmpty().ifEmpty { "?" }} (unclear)"
+                        else -> null
+                    }
+                }
+            return buildString {
+                appendLine(header)
+                appendLine(title)
+                appendLine("Result: $summary")
+                appendLine("Differences: ${if (diffs.isEmpty()) "none" else diffs.joinToString(", ")}")
+                appendLine()
+                appendLine("Text:")
+                appendLine(sourceText)
+                appendLine()
+                appendLine("Heard:")
+                appendLine(transcript.ifBlank { "(none)" })
+                if (readings.size > 1) {
+                    appendLine()
+                    appendLine("Alternates:")
+                    readings.drop(1).forEach { appendLine("- $it") }
+                }
+            }.trimEnd()
+        }
 
         /**
          * Preserves original punctuation, whitespace, and line breaks from [sourceText], marking
@@ -241,6 +285,11 @@ object Recall {
             align(mid, end, split, right)
         }
         align(0, a.size, 0, b.size)
-        return Result(marks = marks, sourceText = normalizedText, transcript = primaryTranscript)
+        return Result(
+            marks = marks,
+            sourceText = normalizedText,
+            transcript = primaryTranscript,
+            readings = readings,
+        )
     }
 }

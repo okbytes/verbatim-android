@@ -21,20 +21,20 @@ To build a signed, minified `.apk` that someone can download and install directl
 ./scripts/build-apk.sh
 ```
 
-This runs the unit tests and lint, signs a release build, verifies the signature, and writes `dist/Verbatim-v0.1.apk`.
+This runs the unit tests and lint, signs a release build, verifies the signature, and writes `dist/Verbatim-v<version>.apk`.
 
-- The first run generates a local release keystore under `.tools/signing/` (gitignored). **Back up `.tools/signing/`** — future updates signed with the same key will install right over an existing copy without losing the user's saved entries (bump `versionCode` and `versionName` in `app/build.gradle.kts` for updates).
-- Host the `.apk` anywhere your recipient can download it (for example on a web page, iCloud Drive, Google Drive, or Dropbox) and send them the link. On their Android phone, they tap the downloaded `.apk`, allow installing unknown apps for their browser or Files app if prompted, and tap **Install**.
+- The first run generates a local release keystore under `~/.config/verbatim/signing/` (outside the repo). **Back up `~/.config/verbatim/signing/`** — future updates signed with the same key will install right over an existing copy without losing the user's saved entries (bump `versionCode` and `versionName` in `app/build.gradle.kts` for updates).
+- Host the `.apk` anywhere your recipient can download it (for example a GitHub Release on a public repo, a web page, iCloud Drive, Google Drive, or Dropbox) and send them the link. On their Android phone, they tap the downloaded `.apk`, allow installing unknown apps for their browser or Files app if prompted, and tap **Install**.
 
 ## Use it
 
 - **Add entry** saves a title and text. Mark it In Progress or schedule it daily or on one weekday using the segmented schedule picker. The Paste icon recognizes common copied Bible citations; ordinary text-field paste leaves the text alone.
-- Tap an entry to read it, then **Recite** to practice reciting the whole text from memory. Practice never changes a review date. Swipe or long-press any library row for quick actions (Recite/Preview, Edit, Duplicate, Delete); the entry screen also supports Copy, Duplicate, Share, Edit, and Delete.
+- Tap an entry to read it, then **Recite** to recite the whole text from memory (if the entry is currently due, this counts as a review; otherwise it is practice and never changes a review date). Swipe or long-press any library row for quick actions (Recite/Preview, Edit, Duplicate, Delete); the entry screen also supports Copy, Duplicate, Share, Edit, and Delete.
 - Tap a **Due** entry to review it without seeing its text first. Choose **Preview** if you want to read instead. Only **Finish review** on the result advances the schedule; backing out or previewing leaves the entry due.
-- **Recite aloud** requires an on-device speech recognizer with an offline model for the phone’s language. Android 12 alone does not guarantee either. Verbatim checks for a local recognizer before asking for microphone access and never falls back to network recognition. Android controls when an utterance ends, so a long pause may end a take. The app never creates an audio file.
+- **Recite aloud** requires an on-device speech recognizer with an offline model for the phone’s language. Android 12 alone does not guarantee either. Verbatim checks for a local recognizer before asking for microphone access, never falls back to network recognition, and uses segmented/continuous listening so brief pauses don’t cut off a take before you tap Stop. The app never creates an audio file.
 - Results preserve original punctuation and line breaks, highlight missed words in crimson, mark extra spoken words in toggleable amber underline, and dot unclear words matched via alternate readings (tap an unclear word to inspect what was heard). The grader doesn’t model homophones, number words, or recognition confidence.
-- **Settings** controls title order and the daily reminder time. Allow notifications for reminders. Android may deliver the reminder after the selected time, especially in battery-saving modes.
-- **Export backup** and **Replace library from backup** save and restore Android library files, including review dates and the reminder time. Replace validates the file and asks before changing the library. **Add entries from backup** skips existing titles and imports new entries unscheduled and not In Progress.
+- **Settings** controls title order and the daily reminder time. Allow notifications for reminders. Android may deliver the reminder within a short window after the selected time, especially in battery-saving modes.
+- **Export**, **Replace**, and **Add** save and restore Android or iPhone Verbatim backup files, including review dates and the reminder time. Replace validates the file and asks before changing the library. **Add** skips existing titles and imports new entries unscheduled and not In Progress.
 
 ## Data and verification
 

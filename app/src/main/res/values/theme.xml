@@ -1,3 +1,4 @@
 <resources>
+    <color name="ic_launcher_background">#125B57</color>
     <style name="VerbatimTheme" parent="android:style/Theme.Material.Light.NoActionBar" />
 </resources>

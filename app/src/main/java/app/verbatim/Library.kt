@@ -1,6 +1,9 @@
 package app.verbatim
 
+import java.text.Normalizer
 import java.time.LocalDate
+import java.util.Locale
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -18,7 +21,45 @@ data class Review(val cadence: Int, val day: LocalDate) {
     }
 }
 
-data class Entry(val title: String, val text: String, val progress: Boolean, val review: Review?) {
+/**
+ * A library entry. Carries a stable in-memory [id] for navigation and Compose keying while keeping
+ * value equality based solely on the persisted fields so backup round-trips compare cleanly.
+ */
+class Entry(
+    val title: String,
+    val text: String,
+    val progress: Boolean,
+    val review: Review?,
+    val id: String = UUID.randomUUID().toString(),
+) {
+    fun copy(
+        title: String = this.title,
+        text: String = this.text,
+        progress: Boolean = this.progress,
+        review: Review? = this.review,
+        id: String = this.id,
+    ): Entry = Entry(title = title, text = text, progress = progress, review = review, id = id)
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Entry) return false
+        return title == other.title &&
+            text == other.text &&
+            progress == other.progress &&
+            review == other.review
+    }
+
+    override fun hashCode(): Int {
+        var result = title.hashCode()
+        result = 31 * result + text.hashCode()
+        result = 31 * result + progress.hashCode()
+        result = 31 * result + (review?.hashCode() ?: 0)
+        return result
+    }
+
+    override fun toString(): String =
+        "Entry(title=$title, text=$text, progress=$progress, review=$review)"
+
     companion object {
         /** Normalize line endings without flattening tabs, poetry, or paragraph boundaries. */
         fun normalizeLineEndings(raw: String): String =
@@ -27,6 +68,13 @@ data class Entry(val title: String, val text: String, val progress: Boolean, val
                 .replace('\u2028', '\n')
                 .replace("\u2029", "\n\n")
                 .replace('\u0085', '\n')
+
+        /** Canonical comparison key matching NFC-normalized, trimmed, case-folded text. */
+        fun normalizedTitleKey(raw: String): String =
+            Normalizer.normalize(raw.trim(), Normalizer.Form.NFC).lowercase(Locale.ROOT)
+
+        fun normalizedBodyKey(raw: String): String =
+            Normalizer.normalize(normalizeLineEndings(raw).trim(), Normalizer.Form.NFC)
     }
 }
 
@@ -41,19 +89,19 @@ data class Library(val entries: List<Entry> = emptyList(), val hour: Int = 9, va
     fun adding(other: Library): Library = addingWithStats(other).library
 
     fun addingWithStats(other: Library): AddEntriesResult {
-        val existing = entries.map { it.title.trim().lowercase() }.toSet()
+        val existing = entries.map { Entry.normalizedTitleKey(it.title) }.toSet()
         val seen = existing.toMutableSet()
         val toAdd = mutableListOf<Entry>()
         var skippedInLibrary = 0
         var skippedRepeated = 0
         for (item in other.entries) {
-            val key = item.title.trim().lowercase()
+            val key = Entry.normalizedTitleKey(item.title)
             if (key in existing) {
                 skippedInLibrary++
             } else if (!seen.add(key)) {
                 skippedRepeated++
             } else {
-                toAdd += item.copy(progress = false, review = null)
+                toAdd += item.copy(progress = false, review = null, id = UUID.randomUUID().toString())
             }
         }
         return AddEntriesResult(
@@ -65,14 +113,14 @@ data class Library(val entries: List<Entry> = emptyList(), val hour: Int = 9, va
     }
 
     fun duplicateTitle(sourceTitle: String): String {
-        val taken = entries.map { it.title.trim().lowercase() }.toSet()
+        val taken = entries.map { Entry.normalizedTitleKey(it.title) }.toSet()
         val base = sourceTitle.trim().ifEmpty { "Entry" }
         val first = "$base (Copy)"
-        if (first.lowercase() !in taken) return first
+        if (Entry.normalizedTitleKey(first) !in taken) return first
         var n = 2
         while (true) {
             val candidate = "$base (Copy $n)"
-            if (candidate.lowercase() !in taken) return candidate
+            if (Entry.normalizedTitleKey(candidate) !in taken) return candidate
             n++
         }
     }
@@ -106,18 +154,15 @@ data class Library(val entries: List<Entry> = emptyList(), val hour: Int = 9, va
 
     companion object {
         private const val FORMAT = "verbatim-android-library"
+        private const val IOS_FORMAT = "verbatim-backup"
 
-        fun decode(raw: String): Library = decode(JSONObject(raw), allowEarlyStore = false)
+        /** Accepts both Android and iPhone Verbatim v1 backup JSON files. */
+        fun decode(raw: String): Library = decode(JSONObject(raw))
 
-        // The first Android build used a different header for its private library.
-        internal fun decodePrivateStore(raw: String): Library =
-            decode(JSONObject(raw), allowEarlyStore = true)
-
-        private fun decode(json: JSONObject, allowEarlyStore: Boolean): Library {
+        private fun decode(json: JSONObject): Library {
             val format = json.get("format")
             require(
-                (format == FORMAT || (allowEarlyStore && format == "verbatim-backup")) &&
-                    json.get("version") == 1
+                (format == FORMAT || format == IOS_FORMAT) && json.get("version") == 1
             ) {
                 "Unrecognized backup format or version."
             }

@@ -1,5 +1,6 @@
 package app.verbatim.ui
 
+import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -18,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -30,8 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
 import kotlin.math.cos
@@ -98,27 +100,39 @@ private fun ringSlot(index: Int, count: Int): Int? {
 }
 
 /**
- * Animated voice feedback modeled on Verbatim's signature waveform:
- * - Preparing: neutral dots gently breathing in a centered line
- * - Listening: Recall Red bars rising in place with the speaker's voice
- * - Transcribing: dots gather into a slowly turning teal ring around a center disc
- * - Succeeded (Verbatim): center disc turns Verbatim Green with a checkmark as ring dots burst outward
+ * Animated voice feedback modeled on Verbatim's signature waveform. Reads [levelProvider] inside
+ * its frame/draw pass so 20 Hz microphone updates never recompose parent screens, and honors the
+ * system's reduced-motion / animator-duration-scale setting.
  */
 @Composable
 fun VoiceWaveform(
     activity: WaveformActivity?,
-    level: Float,
+    levelProvider: () -> Float,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val verbatimColors = LocalVerbatimColors.current
     val neutralColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.42f)
     val accentColor = MaterialTheme.colorScheme.primary
     val surfaceColor = verbatimColors.readingSurface
 
+    val reduceMotion =
+        remember(context) {
+            runCatching {
+                    Settings.Global.getFloat(
+                        context.contentResolver,
+                        Settings.Global.ANIMATOR_DURATION_SCALE,
+                        1f,
+                    ) == 0f
+                }
+                .getOrDefault(false)
+        }
+
     var lastShape by remember { mutableStateOf(WaveformActivity.Preparing) }
     var spinStartSec by remember { mutableFloatStateOf(0f) }
     var burstStartSec by remember { mutableStateOf<Float?>(null) }
     var nowSec by remember { mutableFloatStateOf(0f) }
+    var smoothedRise by remember { mutableFloatStateOf(0f) }
     var frameClockAnchor by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(activity) {
@@ -131,32 +145,21 @@ fun VoiceWaveform(
         }
     }
 
-    val targetRise =
-        if (activity == WaveformActivity.Listening) {
-            ((level - 0.06f) * 1.45f).coerceIn(0f, 1f)
-        } else {
-            0f
-        }
-
-    val presence by
+    val presenceState =
         animateFloatAsState(
             targetValue = if (activity == null) 0f else 1f,
-            animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessLow),
+            animationSpec =
+                if (reduceMotion) tween(120)
+                else spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessLow),
             label = "waveformPresence",
         )
-    val rise by
-        animateFloatAsState(
-            targetValue = targetRise,
-            animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
-            label = "waveformRise",
-        )
-    val listening by
+    val listeningState =
         animateFloatAsState(
             targetValue = if (lastShape == WaveformActivity.Listening) 1f else 0f,
-            animationSpec = tween(durationMillis = 320),
+            animationSpec = tween(durationMillis = if (reduceMotion) 120 else 320),
             label = "waveformListening",
         )
-    val gather by
+    val gatherState =
         animateFloatAsState(
             targetValue =
                 if (
@@ -167,34 +170,62 @@ fun VoiceWaveform(
                 } else {
                     0f
                 },
-            animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessLow),
+            animationSpec =
+                if (reduceMotion) tween(160)
+                else spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessLow),
             label = "waveformGather",
         )
-    val success by
+    val successState =
         animateFloatAsState(
             targetValue = if (lastShape == WaveformActivity.Succeeded) 1f else 0f,
-            animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow),
+            animationSpec =
+                if (reduceMotion) tween(160)
+                else spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow),
             label = "waveformSuccess",
         )
 
-    val needsClock =
-        presence > 0.001f &&
-            (activity != null || gather > 0.001f || rise > 0.001f || listening < 0.999f)
+    val needsClock by
+        remember(activity, reduceMotion) {
+            derivedStateOf {
+                val present = presenceState.value > 0.001f
+                if (!present) return@derivedStateOf false
+                if (activity == WaveformActivity.Listening) return@derivedStateOf true
+                if (reduceMotion) return@derivedStateOf false
+                activity != null || gatherState.value > 0.001f || listeningState.value < 0.999f
+            }
+        }
 
-    LaunchedEffect(needsClock) {
-        if (!needsClock) return@LaunchedEffect
+    LaunchedEffect(needsClock, activity) {
+        if (!needsClock) {
+            smoothedRise = 0f
+            return@LaunchedEffect
+        }
         while (true) {
             withFrameNanos { frameNanos ->
                 if (frameClockAnchor == 0L) frameClockAnchor = frameNanos
                 nowSec = (frameNanos - frameClockAnchor) / 1_000_000_000f
+                val target =
+                    if (activity == WaveformActivity.Listening) {
+                        ((levelProvider() - 0.06f) * 1.45f).coerceIn(0f, 1f)
+                    } else {
+                        0f
+                    }
+                val factor = if (target > smoothedRise) 0.35f else 0.14f
+                smoothedRise += (target - smoothedRise) * factor
             }
         }
     }
 
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val clampedPresence = presence.coerceIn(0f, 1f).toDouble()
+            val clampedPresence = presenceState.value.coerceIn(0f, 1f).toDouble()
             if (clampedPresence <= 0.001) return@Canvas
+
+            val listening = listeningState.value
+            val gather = gatherState.value
+            val success = successState.value
+            val rise = smoothedRise
+            val time = if (reduceMotion) 0.0 else nowSec.toDouble()
 
             val density = this.density.toDouble()
             val barWidth = 3.2 * density
@@ -207,7 +238,6 @@ fun VoiceWaveform(
             val smoothGather = smoothstep(gather.toDouble(), 0.0, 1.0)
             val cx = size.width / 2.0
             val cy = size.height / 2.0
-            val time = nowSec.toDouble()
 
             val gatheringColor =
                 lerp(
@@ -219,14 +249,17 @@ fun VoiceWaveform(
             val circleColor = lerp(accentColor, verbatimColors.verbatim, success.coerceIn(0f, 1f))
 
             val breathing =
-                (1.0 - listening) * (1.0 - smoothGather) * (0.5 + 0.5 * sin(time * 2.4))
+                if (reduceMotion) 0.0
+                else (1.0 - listening) * (1.0 - smoothGather) * (0.5 + 0.5 * sin(time * 2.4))
             val lineOpacity = 1.0 - 0.5 * breathing
 
             val spinEnd = burstStartSec?.let { min(nowSec, it) } ?: nowSec
-            val spin = ((spinEnd - spinStartSec).toDouble() / 6.0) * 2.0 * PI
+            val spin = if (reduceMotion) 0.0 else ((spinEnd - spinStartSec).toDouble() / 6.0) * 2.0 * PI
             val burst =
-                burstStartSec?.let { ((nowSec - it).toDouble() / 0.9).coerceIn(0.0, 1.0) } ?: 0.0
-            val throwDistance = 64.0 * density * (1.0 - (1.0 - burst).pow(3.0))
+                if (reduceMotion) success.toDouble().coerceIn(0.0, 1.0)
+                else burstStartSec?.let { ((nowSec - it).toDouble() / 0.9).coerceIn(0.0, 1.0) } ?: 0.0
+            val throwDistance =
+                if (reduceMotion) 0.0 else 64.0 * density * (1.0 - (1.0 - burst).pow(3.0))
             val burstFade = 1.0 - burst.pow(2.0)
 
             val rawCount = ((size.width - edgeInset) / pitch).toInt()
@@ -234,7 +267,8 @@ fun VoiceWaveform(
             val span = (count - 1) * pitch
             val maxBar = min(size.height.toDouble(), 196.0 * density) * 0.8
 
-            val discRadius = (circleRadius * smoothGather * clampedPresence * (1.0 + 0.1 * success)).toFloat()
+            val discRadius =
+                (circleRadius * smoothGather * clampedPresence * (1.0 + 0.1 * success)).toFloat()
             if (discRadius > 0.5f) {
                 drawCircle(
                     color = circleColor,
@@ -294,15 +328,19 @@ fun VoiceWaveform(
         AnimatedVisibility(
             visible = activity == WaveformActivity.Succeeded,
             enter =
-                scaleIn(
-                    initialScale = 0.35f,
-                    animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow),
-                ) + fadeIn(tween(220)),
+                if (reduceMotion) fadeIn(tween(150))
+                else {
+                    scaleIn(
+                        initialScale = 0.35f,
+                        animationSpec =
+                            spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow),
+                    ) + fadeIn(tween(220))
+                },
             exit = fadeOut(tween(150)),
         ) {
             Icon(
                 imageVector = Icons.Rounded.Check,
-                contentDescription = "Verbatim",
+                contentDescription = null,
                 tint = surfaceColor,
                 modifier = Modifier.size(30.dp),
             )

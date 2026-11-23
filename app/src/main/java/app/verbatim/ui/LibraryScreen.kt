@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -41,7 +42,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -51,10 +51,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,7 +62,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -78,8 +83,6 @@ enum class LibrarySection(val title: String) {
     Library("Library"),
 }
 
-data class IndexedEntry(val index: Int, val entry: Entry)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
@@ -90,21 +93,20 @@ fun LibraryScreen(
     snackbarHostState: SnackbarHostState,
     onAddEntry: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenDetail: (Int) -> Unit,
-    onStartRecall: (index: Int, isReview: Boolean) -> Unit,
-    onEditEntry: (Int) -> Unit,
-    onDuplicateEntry: (Int) -> Unit,
-    onDeleteEntry: (Int) -> Unit,
+    onOpenDetail: (String) -> Unit,
+    onStartRecall: (String) -> Unit,
+    onEditEntry: (String) -> Unit,
+    onDuplicateEntry: (String) -> Unit,
+    onDeleteEntry: (String) -> Unit,
 ) {
     val colors = LocalVerbatimColors.current
-    var pendingDelete by remember { mutableStateOf<IndexedEntry?>(null) }
+    var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
 
     val groupedSections =
         remember(entries, today, bookOrder) {
             val comparator = if (bookOrder) Citation.order else String.CASE_INSENSITIVE_ORDER
             val grouped =
-                entries.indices.groupBy { i ->
-                    val entry = entries[i]
+                entries.groupBy { entry ->
                     when {
                         entry.review?.due(today) == true -> LibrarySection.Due
                         entry.progress -> LibrarySection.InProgress
@@ -114,8 +116,7 @@ fun LibraryScreen(
             LibrarySection.entries.mapNotNull { section ->
                 val items =
                     grouped[section]
-                        ?.sortedWith { a, b -> comparator.compare(entries[a].title, entries[b].title) }
-                        ?.map { IndexedEntry(it, entries[it]) }
+                        ?.sortedWith { a, b -> comparator.compare(a.title, b.title) }
                         ?: emptyList()
                 if (items.isEmpty()) null else section to items
             }
@@ -171,58 +172,109 @@ fun LibraryScreen(
                 state = listState,
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                for ((section, items) in groupedSections) {
-                    item(key = "section_${section.name}") {
-                        LibrarySectionCard(
-                            section = section,
-                            items = items,
-                            today = today,
-                            onTap = { item ->
-                                if (section == LibrarySection.Due) {
-                                    onStartRecall(item.index, true)
-                                } else {
-                                    onOpenDetail(item.index)
+                groupedSections.forEachIndexed { sectionIndex, (section, items) ->
+                    item(key = "header_${section.name}") {
+                        if (sectionIndex > 0) Spacer(Modifier.height(20.dp))
+                        SectionHeaderRow(section = section, count = items.size)
+                    }
+
+                    itemsIndexed(
+                        items = items,
+                        key = { _, entry -> "${section.name}_${entry.id}" },
+                    ) { idx, entry ->
+                        val isFirst = idx == 0
+                        val isLast = idx == items.lastIndex
+                        val shape =
+                            RoundedCornerShape(
+                                topStart = if (isFirst) 16.dp else 0.dp,
+                                topEnd = if (isFirst) 16.dp else 0.dp,
+                                bottomStart = if (isLast) 16.dp else 0.dp,
+                                bottomEnd = if (isLast) 16.dp else 0.dp,
+                            )
+                        Column(modifier = Modifier.fillMaxWidth().clip(shape)) {
+                            LibraryEntryRow(
+                                entry = entry,
+                                section = section,
+                                today = today,
+                                onTap = {
+                                    if (section == LibrarySection.Due) onStartRecall(entry.id)
+                                    else onOpenDetail(entry.id)
+                                },
+                                onAlternate = {
+                                    if (section == LibrarySection.Due) onOpenDetail(entry.id)
+                                    else onStartRecall(entry.id)
+                                },
+                                onEdit = { onEditEntry(entry.id) },
+                                onDuplicate = { onDuplicateEntry(entry.id) },
+                                onDelete = { pendingDeleteId = entry.id },
+                            )
+                            if (!isLast) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().background(colors.groupedCard)
+                                ) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(start = 16.dp),
+                                        thickness = 0.5.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                    )
                                 }
-                            },
-                            onAlternate = { item ->
-                                if (section == LibrarySection.Due) {
-                                    onOpenDetail(item.index)
-                                } else {
-                                    onStartRecall(item.index, false)
-                                }
-                            },
-                            onEdit = { onEditEntry(it.index) },
-                            onDuplicate = { onDuplicateEntry(it.index) },
-                            onRequestDelete = { pendingDelete = it },
-                        )
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
+    val pendingDelete = pendingDeleteId?.let { id -> entries.firstOrNull { it.id == id } }
     pendingDelete?.let { target ->
         AlertDialog(
-            onDismissRequest = { pendingDelete = null },
+            onDismissRequest = { pendingDeleteId = null },
             title = { Text("Delete entry?") },
             text = {
-                Text("“${target.entry.title}” and its review schedule will be permanently removed.")
+                Text("“${target.title}” and its review schedule will be permanently removed.")
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        pendingDelete = null
-                        onDeleteEntry(target.index)
+                        pendingDeleteId = null
+                        onDeleteEntry(target.id)
                     }
                 ) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingDeleteId = null }) { Text("Cancel") }
             },
+        )
+    }
+}
+
+@Composable
+private fun SectionHeaderRow(section: LibrarySection, count: Int) {
+    val colors = LocalVerbatimColors.current
+    Row(
+        modifier =
+            Modifier.fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .semantics { heading() },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = section.title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color =
+                if (section == LibrarySection.Due) colors.dueTint
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -267,77 +319,10 @@ private fun EmptyLibraryState(onAddEntry: () -> Unit, modifier: Modifier = Modif
     }
 }
 
-@Composable
-private fun LibrarySectionCard(
-    section: LibrarySection,
-    items: List<IndexedEntry>,
-    today: LocalDate,
-    onTap: (IndexedEntry) -> Unit,
-    onAlternate: (IndexedEntry) -> Unit,
-    onEdit: (IndexedEntry) -> Unit,
-    onDuplicate: (IndexedEntry) -> Unit,
-    onRequestDelete: (IndexedEntry) -> Unit,
-) {
-    val colors = LocalVerbatimColors.current
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text = section.title,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color =
-                    if (section == LibrarySection.Due) colors.dueTint
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = items.size.toString(),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-            )
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            color = colors.groupedCard,
-            tonalElevation = 0.dp,
-        ) {
-            Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
-                items.forEachIndexed { idx, item ->
-                    key(section, item.index, item.entry.title) {
-                        LibraryEntryRow(
-                            item = item,
-                            section = section,
-                            today = today,
-                            onTap = { onTap(item) },
-                            onAlternate = { onAlternate(item) },
-                            onEdit = { onEdit(item) },
-                            onDuplicate = { onDuplicate(item) },
-                            onDelete = { onRequestDelete(item) },
-                        )
-                    }
-                    if (idx < items.lastIndex) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 16.dp),
-                            thickness = 0.5.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryEntryRow(
-    item: IndexedEntry,
+    entry: Entry,
     section: LibrarySection,
     today: LocalDate,
     onTap: () -> Unit,
@@ -353,6 +338,8 @@ private fun LibraryEntryRow(
 
     val currentOnAlternate by rememberUpdatedState(onAlternate)
     val currentOnEdit by rememberUpdatedState(onEdit)
+    val currentOnDuplicate by rememberUpdatedState(onDuplicate)
+    val currentOnDelete by rememberUpdatedState(onDelete)
 
     val dismissState =
         rememberSwipeToDismissBoxState(
@@ -374,15 +361,16 @@ private fun LibraryEntryRow(
             positionalThreshold = { totalDistance -> totalDistance * 0.35f },
         )
 
+    val alternateLabel = if (section == LibrarySection.Due) "Preview entry" else "Recite"
     val rowDescription =
         buildString {
-            append(item.entry.title)
-            item.entry.review?.let { review ->
+            append(entry.title)
+            entry.review?.let { review ->
                 append(". ")
                 append(ReviewFormat.accessibilitySummary(review, today))
             }
             if (section == LibrarySection.Due) {
-                append(" Tap to review without showing the text.")
+                append(" Opens the review without showing the text.")
             }
         }
 
@@ -394,14 +382,16 @@ private fun LibraryEntryRow(
             val isEnd = direction == SwipeToDismissBoxValue.EndToStart
             val bgColor =
                 when {
-                    isStart && section == LibrarySection.Due -> MaterialTheme.colorScheme.secondaryContainer
+                    isStart && section == LibrarySection.Due ->
+                        MaterialTheme.colorScheme.secondaryContainer
                     isStart -> colors.recite.copy(alpha = 0.16f)
                     isEnd -> MaterialTheme.colorScheme.primaryContainer
                     else -> colors.groupedCard
                 }
             val iconTint =
                 when {
-                    isStart && section == LibrarySection.Due -> MaterialTheme.colorScheme.onSecondaryContainer
+                    isStart && section == LibrarySection.Due ->
+                        MaterialTheme.colorScheme.onSecondaryContainer
                     isStart -> colors.recite
                     isEnd -> MaterialTheme.colorScheme.onPrimaryContainer
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -416,13 +406,13 @@ private fun LibraryEntryRow(
                         imageVector =
                             if (section == LibrarySection.Due) Icons.Rounded.Visibility
                             else Icons.Rounded.Mic,
-                        contentDescription = if (section == LibrarySection.Due) "Preview" else "Recite",
+                        contentDescription = null,
                         tint = iconTint,
                     )
                 } else if (isEnd) {
                     Icon(
                         imageVector = Icons.Rounded.Edit,
-                        contentDescription = "Edit",
+                        contentDescription = null,
                         tint = iconTint,
                     )
                 }
@@ -438,22 +428,44 @@ private fun LibraryEntryRow(
                         onLongClick = { menuExpanded = true },
                     )
                     .padding(horizontal = 16.dp, vertical = 14.dp)
-                    .semantics { contentDescription = rowDescription }
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Button
+                        contentDescription = rowDescription
+                        customActions =
+                            listOf(
+                                CustomAccessibilityAction(alternateLabel) {
+                                    currentOnAlternate()
+                                    true
+                                },
+                                CustomAccessibilityAction("Edit") {
+                                    currentOnEdit()
+                                    true
+                                },
+                                CustomAccessibilityAction("Duplicate") {
+                                    currentOnDuplicate()
+                                    true
+                                },
+                                CustomAccessibilityAction("Delete") {
+                                    currentOnDelete()
+                                    true
+                                },
+                            )
+                    }
 
             if (fontScale >= 1.4f) {
                 Column(modifier = contentModifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = item.entry.title,
+                        text = entry.title,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    if (item.entry.review != null || section == LibrarySection.Due) {
+                    if (entry.review != null || section == LibrarySection.Due) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            RowMetadata(entry = item.entry, section = section, today = today)
+                            RowMetadata(entry = entry, section = section, today = today)
                         }
                     }
                 }
@@ -463,7 +475,7 @@ private fun LibraryEntryRow(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = item.entry.title,
+                        text = entry.title,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -471,13 +483,13 @@ private fun LibraryEntryRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    if (item.entry.review != null || section == LibrarySection.Due) {
+                    if (entry.review != null || section == LibrarySection.Due) {
                         Spacer(Modifier.width(12.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            RowMetadata(entry = item.entry, section = section, today = today)
+                            RowMetadata(entry = entry, section = section, today = today)
                         }
                     }
                 }
@@ -488,7 +500,7 @@ private fun LibraryEntryRow(
                 onDismissRequest = { menuExpanded = false },
             ) {
                 DropdownMenuItem(
-                    text = { Text(if (section == LibrarySection.Due) "Preview entry" else "Recite") },
+                    text = { Text(alternateLabel) },
                     leadingIcon = {
                         Icon(
                             imageVector =

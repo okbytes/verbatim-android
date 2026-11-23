@@ -23,18 +23,26 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.verbatim.Review
 import java.text.DateFormatSymbols
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.time.format.TextStyle
 import java.util.Locale
 
 object ReviewFormat {
-    private val weekdayShortNames = listOf("Su", "M", "Tu", "W", "Th", "F", "Sa")
+    private val englishShortWeekdays = listOf("Su", "M", "Tu", "W", "Th", "F", "Sa")
 
     private fun weekdayFullNames(): List<String> = DateFormatSymbols().weekdays.drop(1)
 
-    fun weekdayShort(cadence: Int): String = weekdayShortNames[(cadence - 1).coerceIn(0, 6)]
+    fun weekdayShort(cadence: Int): String {
+        val idx = (cadence - 1).coerceIn(0, 6)
+        val locale = Locale.getDefault()
+        if (locale.language == Locale.ENGLISH.language) return englishShortWeekdays[idx]
+        val dayOfWeek = if (idx == 0) DayOfWeek.SUNDAY else DayOfWeek.of(idx)
+        return dayOfWeek.getDisplayName(TextStyle.SHORT_STANDALONE, locale).take(2)
+    }
 
     fun weekdayFull(cadence: Int): String = weekdayFullNames()[(cadence - 1).coerceIn(0, 6)]
 
@@ -58,7 +66,9 @@ object ReviewFormat {
         }
 
     fun accessibilitySummary(review: Review, today: LocalDate): String {
-        val schedule = if (review.cadence == 0) "Daily review" else "Weekly review, ${weekdayFull(review.cadence)}"
+        val schedule =
+            if (review.cadence == 0) "Daily review"
+            else "Weekly review, ${weekdayFull(review.cadence)}"
         val whenDue =
             when {
                 review.due(today) -> "Due today"

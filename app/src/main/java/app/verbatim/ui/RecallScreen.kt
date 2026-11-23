@@ -1,10 +1,10 @@
 package app.verbatim.ui
 
 import android.app.Activity
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -19,6 +19,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -33,11 +34,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
@@ -48,6 +51,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -81,8 +85,10 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -98,7 +104,7 @@ sealed interface RecallPhase {
 
     data object Preparing : RecallPhase
 
-    data class Recording(val startedAtMs: Long, val level: Float) : RecallPhase
+    data class Recording(val startedAtElapsedMs: Long) : RecallPhase
 
     data object Transcribing : RecallPhase
 
@@ -113,6 +119,7 @@ fun RecallScreen(
     isReview: Boolean,
     speechAvailable: Boolean,
     phase: RecallPhase,
+    levelProvider: () -> Float,
     snackbarHostState: SnackbarHostState,
     onClose: () -> Unit,
     onPreviewEntry: () -> Unit,
@@ -123,6 +130,7 @@ fun RecallScreen(
     onFinishReview: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onCopyText: (String) -> Unit,
+    onCopyTranscriptionLog: (Recall.Result) -> Unit,
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -144,9 +152,15 @@ fun RecallScreen(
         }
     }
 
-    LaunchedEffect(phase is RecallPhase.Celebrating) {
-        if (phase is RecallPhase.Celebrating) {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    LaunchedEffect(phase) {
+        when (phase) {
+            is RecallPhase.Celebrating -> haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+            is RecallPhase.Result -> {
+                if (!phase.result.verbatim) {
+                    haptic.performHapticFeedback(HapticFeedbackType.Reject)
+                }
+            }
+            else -> Unit
         }
     }
 
@@ -167,6 +181,7 @@ fun RecallScreen(
                 onTryAgain = onTryAgain,
                 onFinishReview = onFinishReview,
                 onCopyText = onCopyText,
+                onCopyTranscriptionLog = { onCopyTranscriptionLog(phase.result) },
             )
         } else {
             RecallAttemptStage(
@@ -174,6 +189,7 @@ fun RecallScreen(
                 isReview = isReview,
                 speechAvailable = speechAvailable,
                 phase = phase,
+                levelProvider = levelProvider,
                 snackbarHostState = snackbarHostState,
                 onClose = onClose,
                 onPreviewEntry = onPreviewEntry,
@@ -193,6 +209,7 @@ private fun RecallAttemptStage(
     isReview: Boolean,
     speechAvailable: Boolean,
     phase: RecallPhase,
+    levelProvider: () -> Float,
     snackbarHostState: SnackbarHostState,
     onClose: () -> Unit,
     onPreviewEntry: () -> Unit,
@@ -208,12 +225,18 @@ private fun RecallAttemptStage(
     val isVerbatim = phase is RecallPhase.Celebrating
     val isBusy = phase is RecallPhase.Preparing || phase is RecallPhase.Transcribing || isVerbatim
     val isAttempting = phase !is RecallPhase.Idle
+    val canStartOver =
+        phase is RecallPhase.Preparing ||
+            phase is RecallPhase.Recording ||
+            phase is RecallPhase.Transcribing
 
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(phase is RecallPhase.Recording) {
+    LaunchedEffect(phase) {
         if (phase is RecallPhase.Recording) {
             while (true) {
-                elapsedSeconds = ((System.currentTimeMillis() - phase.startedAtMs) / 1000L).coerceAtLeast(0L)
+                elapsedSeconds =
+                    ((SystemClock.elapsedRealtime() - phase.startedAtElapsedMs) / 1000L)
+                        .coerceAtLeast(0L)
                 delay(250L)
             }
         } else {
@@ -254,7 +277,7 @@ private fun RecallAttemptStage(
         containerColor = colors.readingSurface,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
+            CenterAlignedTopAppBar(
                 navigationIcon = {
                     IconButton(onClick = onClose) {
                         Icon(imageVector = Icons.Rounded.Close, contentDescription = "Close")
@@ -270,21 +293,19 @@ private fun RecallAttemptStage(
                         } else {
                             ""
                         }
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = contextLabel + timerText,
-                            style =
-                                MaterialTheme.typography.labelLarge.copy(
-                                    fontFamily = FontFamily.SansSerif,
-                                    fontFeatureSettings = "tnum",
-                                ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
+                    Text(
+                        text = contextLabel + timerText,
+                        style =
+                            MaterialTheme.typography.labelLarge.copy(
+                                fontFamily = FontFamily.SansSerif,
+                                fontFeatureSettings = "tnum",
+                            ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
                 },
                 actions = {
-                    if (isRecording) {
+                    if (canStartOver) {
                         IconButton(onClick = onStartOver) {
                             Icon(
                                 imageVector = Icons.Rounded.Refresh,
@@ -301,102 +322,160 @@ private fun RecallAttemptStage(
                             Spacer(Modifier.width(6.dp))
                             Text("Preview")
                         }
-                    } else {
-                        Spacer(Modifier.width(48.dp))
                     }
                 },
                 colors =
-                    TopAppBarDefaults.topAppBarColors(
+                    TopAppBarDefaults.centerAlignedTopAppBarColors(
                         containerColor = colors.readingSurface,
                         scrolledContainerColor = colors.readingSurface,
                     ),
             )
         },
     ) { innerPadding ->
-        Column(
-            modifier =
-                Modifier.fillMaxSize()
-                    .padding(innerPadding)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 24.dp)
         ) {
-            if (topSpacerWeight > 0.01f) {
-                Spacer(Modifier.weight(topSpacerWeight))
-            }
+            val isCompactHeight = maxHeight < 460.dp
 
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = entryTitle,
-                    style = VerbatimTypography.entryLargeTitle,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = promptText,
-                    style =
-                        if (isVerbatim) {
-                            MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
-                        } else {
-                            MaterialTheme.typography.bodyMedium
-                        },
-                    color =
-                        if (isVerbatim) colors.verbatim
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                if (phase is RecallPhase.Idle && phase.needsMicSettings) {
-                    Spacer(Modifier.height(14.dp))
-                    FilledTonalButton(onClick = onOpenAppSettings) {
-                        Text("Open settings")
+            val showButton =
+                speechAvailable &&
+                    phase !is RecallPhase.Transcribing &&
+                    phase !is RecallPhase.Celebrating
+
+            val recordButtonBlock: @Composable () -> Unit = {
+                Box(
+                    modifier =
+                        Modifier.padding(bottom = if (isCompactHeight) 16.dp else 36.dp)
+                            .height(84.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showButton,
+                        enter = fadeIn(tween(220)),
+                        exit = fadeOut(tween(180)),
+                    ) {
+                        RecordStopButton(
+                            isRecording = isRecording,
+                            enabled = !isBusy,
+                            onClick = {
+                                if (phase is RecallPhase.Recording) {
+                                    if (
+                                        SystemClock.elapsedRealtime() - phase.startedAtElapsedMs <
+                                            500L
+                                    ) {
+                                        return@RecordStopButton
+                                    }
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onStopRecording()
+                                } else if (phase is RecallPhase.Idle) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onStartRecording()
+                                }
+                            },
+                        )
                     }
                 }
             }
 
-            Box(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                VoiceWaveform(
-                    activity = waveformActivity,
-                    level = (phase as? RecallPhase.Recording)?.level ?: 0f,
-                    modifier = Modifier.fillMaxWidth().height(210.dp),
-                )
-            }
-
-            Box(
-                modifier = Modifier.padding(bottom = 36.dp).height(84.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                val showButton =
-                    speechAvailable &&
-                        phase !is RecallPhase.Transcribing &&
-                        phase !is RecallPhase.Celebrating
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showButton,
-                    enter = fadeIn(tween(220)),
-                    exit = fadeOut(tween(180)),
+            if (isCompactHeight) {
+                // Scrollable compact layout for landscape / very large accessibility text.
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    RecordStopButton(
-                        isRecording = isRecording,
-                        enabled = !isBusy,
-                        onClick = {
-                            if (phase is RecallPhase.Recording) {
-                                // Guard against accidental double-tap cutting off a brand-new take.
-                                if (System.currentTimeMillis() - phase.startedAtMs < 500L) return@RecordStopButton
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onStopRecording()
-                            } else if (phase is RecallPhase.Idle) {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onStartRecording()
-                            }
-                        },
+                    Spacer(Modifier.height(8.dp))
+                    RecallHeadingBlock(
+                        entryTitle = entryTitle,
+                        promptText = promptText,
+                        isVerbatim = isVerbatim,
+                        showSettingsButton = phase is RecallPhase.Idle && phase.needsMicSettings,
+                        onOpenAppSettings = onOpenAppSettings,
                     )
+                    if (waveformActivity != null) {
+                        VoiceWaveform(
+                            activity = waveformActivity,
+                            levelProvider = levelProvider,
+                            modifier = Modifier.fillMaxWidth().height(120.dp),
+                        )
+                    }
+                    recordButtonBlock()
                 }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (topSpacerWeight > 0.01f) {
+                        Spacer(Modifier.weight(topSpacerWeight))
+                    }
+
+                    RecallHeadingBlock(
+                        entryTitle = entryTitle,
+                        promptText = promptText,
+                        isVerbatim = isVerbatim,
+                        showSettingsButton = phase is RecallPhase.Idle && phase.needsMicSettings,
+                        onOpenAppSettings = onOpenAppSettings,
+                        modifier = Modifier.padding(top = 16.dp),
+                    )
+
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        VoiceWaveform(
+                            activity = waveformActivity,
+                            levelProvider = levelProvider,
+                            modifier = Modifier.fillMaxWidth().height(210.dp),
+                        )
+                    }
+
+                    recordButtonBlock()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecallHeadingBlock(
+    entryTitle: String,
+    promptText: String,
+    isVerbatim: Boolean,
+    showSettingsButton: Boolean,
+    onOpenAppSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalVerbatimColors.current
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = entryTitle,
+            style = VerbatimTypography.entryLargeTitle,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = promptText,
+            style =
+                if (isVerbatim) {
+                    MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                } else {
+                    MaterialTheme.typography.bodyMedium
+                },
+            color =
+                if (isVerbatim) colors.verbatim
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
+        if (showSettingsButton) {
+            Spacer(Modifier.height(14.dp))
+            FilledTonalButton(onClick = onOpenAppSettings) {
+                Text("Open settings")
             }
         }
     }
@@ -463,6 +542,7 @@ private fun RecallResultStage(
     onTryAgain: () -> Unit,
     onFinishReview: () -> Unit,
     onCopyText: (String) -> Unit,
+    onCopyTranscriptionLog: () -> Unit,
 ) {
     val colors = LocalVerbatimColors.current
     val scrollState = rememberScrollState()
@@ -480,6 +560,22 @@ private fun RecallResultStage(
     var showTranscript by remember(result) { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var inspectedUnclear by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    val outcomeAnnouncement =
+        remember(result) {
+            if (result.verbatim) {
+                if (result.unclearCount > 0) "Verbatim, ${result.unclearCount} unclear."
+                else "Verbatim. Every word matched."
+            } else {
+                listOfNotNull(
+                        result.missedCount.takeIf { it > 0 }?.let { "$it missed" },
+                        result.unclearCount.takeIf { it > 0 }?.let { "$it unclear" },
+                        result.extraCount.takeIf { it > 0 }?.let { "$it extra" },
+                    )
+                    .joinToString(", ")
+                    .ifEmpty { "Recitation complete." }
+            }
+        }
 
     Scaffold(
         containerColor = colors.readingSurface,
@@ -541,6 +637,16 @@ private fun RecallResultStage(
                                     onCopyText(
                                         if (showTranscript) result.transcript else result.sourceText
                                     )
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Copy transcription log") },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.BugReport, contentDescription = null)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onCopyTranscriptionLog()
                                 },
                             )
                         }
@@ -621,63 +727,73 @@ private fun RecallResultStage(
 
             Spacer(Modifier.height(12.dp))
 
-            if (result.verbatim) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            Box(
+                modifier =
+                    Modifier.fillMaxWidth().semantics {
+                        liveRegion = LiveRegionMode.Polite
+                        contentDescription = outcomeAnnouncement
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (result.verbatim) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = colors.verbatim,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Text(
+                                text = "Verbatim",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.verbatim,
+                            )
+                        }
+                        if (result.unclearCount > 0) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "${result.unclearCount} unclear · tap dotted words",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                } else {
+                    FlowRow(
+                        horizontalArrangement =
+                            Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CheckCircle,
-                            contentDescription = null,
-                            tint = colors.verbatim,
-                            modifier = Modifier.size(22.dp),
-                        )
-                        Text(
-                            text = "Verbatim",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.verbatim,
-                        )
-                    }
-                    if (result.unclearCount > 0) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "${result.unclearCount} unclear · tap dotted words",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            } else {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (result.missedCount > 0) {
-                        Text(
-                            text = "${result.missedCount} missed",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = colors.missedWord,
-                            modifier = Modifier.align(Alignment.CenterVertically),
-                        )
-                    }
-                    if (result.unclearCount > 0) {
-                        Text(
-                            text = "${result.unclearCount} unclear",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.align(Alignment.CenterVertically),
-                        )
-                    }
-                    if (result.extraCount > 0) {
-                        ExtraWordsPill(
-                            count = result.extraCount,
-                            checked = showExtraWords,
-                            enabled = !showTranscript,
-                            onToggle = { showExtraWords = !showExtraWords },
-                        )
+                        if (result.missedCount > 0) {
+                            Text(
+                                text = "${result.missedCount} missed",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = colors.missedWord,
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                            )
+                        }
+                        if (result.unclearCount > 0) {
+                            Text(
+                                text = "${result.unclearCount} unclear",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                            )
+                        }
+                        if (result.extraCount > 0) {
+                            ExtraWordsPill(
+                                count = result.extraCount,
+                                checked = showExtraWords,
+                                enabled = !showTranscript,
+                                onToggle = { showExtraWords = !showExtraWords },
+                            )
+                        }
                     }
                 }
             }
@@ -751,25 +867,24 @@ private fun ExtraWordsPill(
     onToggle: () -> Unit,
 ) {
     val colors = LocalVerbatimColors.current
-    val bg =
-        if (checked) colors.extraWord else MaterialTheme.colorScheme.surfaceVariant
-    val fg =
-        if (checked) colors.onExtraWord else colors.extraWord
+    val bg = if (checked) colors.extraWord else MaterialTheme.colorScheme.surfaceVariant
+    val fg = if (checked) colors.onExtraWord else colors.extraWord
     val label = "$count extra"
 
     Box(
         modifier =
-            Modifier.defaultMinSize(minHeight = 32.dp)
+            Modifier.defaultMinSize(minHeight = 36.dp)
+                .alpha(if (enabled) 1f else 0.4f)
                 .clip(RoundedCornerShape(50))
                 .background(bg)
-                .alpha(if (enabled) 1f else 0.4f)
-                .clickable(enabled = enabled, onClick = onToggle)
-                .padding(horizontal = 12.dp, vertical = 5.dp)
-                .semantics {
-                    contentDescription =
-                        if (checked) "$label, shown. Tap to hide extra words."
-                        else "$label, hidden. Tap to show extra words."
-                },
+                .toggleable(
+                    value = checked,
+                    enabled = enabled,
+                    role = Role.Switch,
+                    onValueChange = { onToggle() },
+                )
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .semantics { contentDescription = "Show $label words" },
         contentAlignment = Alignment.Center,
     ) {
         Text(
